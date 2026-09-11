@@ -1,0 +1,20 @@
+# Gentleman Guardian Angel configuration
+# https://github.com/Gentleman-Programming/gentle-ai
+# `gga install` wires this as a pre-commit review hook.
+
+# AI provider (required). See `gentle-ai doctor` for what's available.
+PROVIDER="codex"
+
+# Files to review. Narrow this to your source languages.
+FILE_PATTERNS="*"
+
+# Never review generated/vendored/memory-cache artifacts.
+EXCLUDE_PATTERNS="node_modules/*,dist/*,.engram/*,logs/*,*.log"
+
+# Review rules live in AGENTS.md.
+RULES_FILE="AGENTS.md"
+
+# Fail on ambiguous review outcomes.
+STRICT_MODE="true"
+
+TIMEOUT="900"

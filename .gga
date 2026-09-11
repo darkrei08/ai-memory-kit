@@ -1,0 +1,20 @@
+# Gentleman Guardian Angel configuration for ai-memory-kit
+# https://github.com/Gentleman-Programming/gentle-ai
+
+# AI provider used for pre-commit review (see `gentle-ai doctor`).
+PROVIDER="codex"
+
+# This repo is shell + PowerShell + Markdown templates. Review those.
+FILE_PATTERNS="*.sh,*.ps1,bin/*,hooks/*"
+
+# Templates and docs are prose, not code to lint.
+EXCLUDE_PATTERNS="*.md,templates/*,docs/*,logs/*,*.log"
+
+# Review rules live in AGENTS.md.
+RULES_FILE="AGENTS.md"
+
+# Fail on ambiguous review outcomes.
+STRICT_MODE="true"
+
+# Allow slower providers on larger changesets.
+TIMEOUT="900"

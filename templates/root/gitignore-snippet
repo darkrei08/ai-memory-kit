@@ -1,0 +1,6 @@
+# --- ai-memory-kit: ephemeral, regenerable local state (never committed) ---
+.atl/
+.codegraph/
+*.local
+.env.local
+# NOTE: `.engram/` (the committed sync chunks) is intentionally NOT ignored.

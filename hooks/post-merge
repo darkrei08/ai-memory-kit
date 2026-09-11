@@ -1,0 +1,11 @@
+#!/bin/sh
+# ai-memory-kit — rehydrate the local Engram cache after `git pull`/merge brings
+# in new committed chunks. Safe no-op when engram is absent or no chunks changed.
+set -eu
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+[ -d "$root/.engram/chunks" ] || exit 0
+command -v engram >/dev/null 2>&1 || exit 0
+if [ -n "$(ls -A "$root/.engram/chunks" 2>/dev/null || true)" ]; then
+  ( cd -- "$root" && engram sync --import >/dev/null 2>&1 ) || true
+fi
+exit 0

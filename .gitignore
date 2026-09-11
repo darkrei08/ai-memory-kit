@@ -1,0 +1,12 @@
+# ai-memory-kit — repo-local ignores
+# This kit is the SOURCE of the templates; it has no runtime state of its own.
+
+# Local agent/runtime state that must never be committed (regenerable).
+.atl/
+.codegraph/
+*.log
+*.tgz
+node_modules/
+
+# NOTE: a project's own `.engram/` sync chunks are intentionally COMMITTED
+# in the projects that consume this kit. They are not ignored there.

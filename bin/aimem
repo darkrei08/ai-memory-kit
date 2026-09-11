@@ -1,0 +1,338 @@
+#!/bin/sh
+# aimem — repository-centric, machine-independent memory for AI coding agents.
+# POSIX sh, zero runtime dependencies. Degrades gracefully when optional tools
+# (engram, gga, gentle-ai) are absent. Every command is idempotent.
+set -eu
+
+AIMEM_VERSION="0.1.0"
+
+# --------------------------------------------------------------------------
+# tiny output helpers
+# --------------------------------------------------------------------------
+_c_reset=''; _c_dim=''; _c_ok=''; _c_warn=''; _c_err=''
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  _c_reset=$(printf '\033[0m'); _c_dim=$(printf '\033[2m')
+  _c_ok=$(printf '\033[32m'); _c_warn=$(printf '\033[33m'); _c_err=$(printf '\033[31m')
+fi
+log()  { printf '%s\n' "$*"; }
+info() { printf '%s->%s %s\n' "$_c_dim" "$_c_reset" "$*"; }
+ok()   { printf '%sok%s   %s\n' "$_c_ok" "$_c_reset" "$*"; }
+warn() { printf '%swarn%s %s\n' "$_c_warn" "$_c_reset" "$*" >&2; }
+die()  { printf '%serror%s %s\n' "$_c_err" "$_c_reset" "$*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# --------------------------------------------------------------------------
+# locate the template root shipped with this kit
+# --------------------------------------------------------------------------
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+templates_root=""
+resolve_templates() {
+  for cand in \
+    "${AIMEM_TEMPLATES:-}" \
+    "$script_dir/../templates" \
+    "$script_dir/../share/ai-memory-kit/templates" \
+    "$HOME/.local/share/ai-memory-kit/templates" \
+    "$HOME/.ai-memory-kit/templates"; do
+    [ -n "$cand" ] || continue
+    if [ -d "$cand/ai" ]; then
+      templates_root=$(CDPATH= cd -- "$cand" && pwd)
+      return 0
+    fi
+  done
+  return 1
+}
+
+# --------------------------------------------------------------------------
+# repository + project helpers
+# --------------------------------------------------------------------------
+repo_root() {
+  if have git && git rev-parse --show-toplevel >/dev/null 2>&1; then
+    git rev-parse --show-toplevel
+  else
+    pwd
+  fi
+}
+
+# Engram derives the project name from the working-directory basename, lowercased.
+# We record the canonical name in the manifest so a differently-named clone still
+# resolves correctly.
+project_name() {
+  root=$(repo_root)
+  base=$(basename -- "$root")
+  printf '%s' "$base" | tr '[:upper:]' '[:lower:]'
+}
+
+# Read a scalar "key: value" from .ai/manifest.yml (shallow, best-effort).
+manifest_get() {
+  key=$1; file=$2
+  [ -f "$file" ] || return 1
+  # first matching "  key: value", trims quotes/comment/space
+  sed -n "s/^[[:space:]]*${key}:[[:space:]]*//p" "$file" \
+    | head -n1 | sed 's/[[:space:]]*#.*$//; s/^"//; s/"$//; s/[[:space:]]*$//'
+}
+
+copy_if_absent() {
+  src=$1; dest=$2
+  if [ -e "$dest" ]; then
+    info "keep   $dest (exists)"
+  else
+    mkdir -p -- "$(dirname -- "$dest")"
+    cp -- "$src" "$dest"
+    ok "add    $dest"
+  fi
+}
+
+append_line_once() {
+  line=$1; file=$2
+  touch -- "$file"
+  grep -Fqx -- "$line" "$file" 2>/dev/null || printf '%s\n' "$line" >>"$file"
+}
+
+# --------------------------------------------------------------------------
+# commands
+# --------------------------------------------------------------------------
+cmd_init() {
+  want_hooks=0
+  for a in "$@"; do [ "$a" = "--hooks" ] && want_hooks=1; done
+  resolve_templates || die "template root not found (set AIMEM_TEMPLATES or reinstall the kit)."
+  root=$(repo_root)
+  pname=$(project_name)
+  info "initializing repository memory in: $root"
+  info "engram project name: $pname"
+
+  # 1) .ai/ human source of truth (never overwrite curated files)
+  ( cd -- "$templates_root/ai" && find . -type f ) | while IFS= read -r rel; do
+    rel=${rel#./}
+    copy_if_absent "$templates_root/ai/$rel" "$root/.ai/$rel"
+  done
+
+  # 2) machine-readable Engram chunk store (committed)
+  mkdir -p -- "$root/.engram/chunks"
+  [ -f "$root/.engram/.gitkeep" ] || : >"$root/.engram/.gitkeep"
+
+  # 3) executable bootstrap regenerators (declarative dir; runs on bootstrap)
+  mkdir -p -- "$root/.ai/bootstrap.d"
+
+  # 4) root templates (only when missing)
+  [ -f "$templates_root/root/AGENTS.md" ] && copy_if_absent "$templates_root/root/AGENTS.md" "$root/AGENTS.md"
+  [ -f "$templates_root/root/gga" ] && copy_if_absent "$templates_root/root/gga" "$root/.gga"
+
+  # 5) fill the engram project name into the manifest if still a placeholder
+  mf="$root/.ai/manifest.yml"
+  if [ -f "$mf" ] && grep -q '__ENGRAM_PROJECT__' "$mf" 2>/dev/null; then
+    tmp="$mf.tmp.$$"
+    sed "s/__ENGRAM_PROJECT__/$pname/g" "$mf" >"$tmp" && mv -- "$tmp" "$mf"
+    ok "set    manifest engram project -> $pname"
+  fi
+
+  # 6) merge .gitignore snippet (ignore only the ephemeral, never .engram/)
+  if [ -f "$templates_root/root/gitignore-snippet" ]; then
+    while IFS= read -r gl; do
+      [ -n "$gl" ] || continue
+      append_line_once "$gl" "$root/.gitignore"
+    done <"$templates_root/root/gitignore-snippet"
+    ok "merge  .gitignore ignores (.atl/, .codegraph/, *.local)"
+  fi
+
+  # 7) optional git hooks
+  if [ "$want_hooks" -eq 1 ]; then
+    install_hooks "$root"
+  fi
+
+  log ""
+  ok "repository memory ready."
+  log "next:"
+  log "  1. review and fill .ai/CONTEXT.md, .ai/conventions.md, .ai/directives.md"
+  log "  2. commit .ai/ and .engram/ together with your code"
+  log "  3. on a fresh clone run: aimem bootstrap"
+}
+
+install_hooks() {
+  root=$1
+  hdir="$root/.git/hooks"
+  [ -d "$root/.git" ] || { warn "no .git dir; skipping hooks"; return 0; }
+  mkdir -p -- "$hdir"
+  for h in post-merge post-checkout; do
+    src="$script_dir/../hooks/$h"
+    [ -f "$src" ] || src="$templates_root/../hooks/$h"
+    if [ -f "$src" ]; then
+      cp -- "$src" "$hdir/$h" && chmod +x "$hdir/$h" && ok "hook   $hdir/$h"
+    fi
+  done
+}
+
+cmd_bootstrap() {
+  root=$(repo_root)
+  mf="$root/.ai/manifest.yml"
+  [ -d "$root/.ai" ] || die "no .ai/ found — run 'aimem init' first."
+  info "bootstrapping from repository memory: $root"
+
+  # 1) rehydrate the local Engram cache from committed chunks
+  if have engram; then
+    if [ -d "$root/.engram/chunks" ] && [ -n "$(ls -A "$root/.engram/chunks" 2>/dev/null || true)" ]; then
+      info "importing Engram chunks -> local cache"
+      ( cd -- "$root" && engram sync --import ) || warn "engram import reported an issue (continuing)"
+    else
+      info "no committed Engram chunks yet (Markdown remains the source of truth)"
+    fi
+  else
+    warn "engram not installed — skipping cache rehydration (Markdown memory still available)"
+  fi
+
+  # 2) run declarative local-state regenerators (never committed state)
+  if [ -d "$root/.ai/bootstrap.d" ]; then
+    for s in "$root"/.ai/bootstrap.d/*.sh; do
+      [ -f "$s" ] || continue
+      info "regenerate: $(basename -- "$s")"
+      ( cd -- "$root" && sh "$s" ) || warn "regenerator failed: $(basename -- "$s") (continuing)"
+    done
+  fi
+
+  # 3) print a context summary for the agent/human
+  log ""
+  log "===== repository context ====="
+  [ -f "$root/.ai/CONTEXT.md" ] && sed -n '1,20p' "$root/.ai/CONTEXT.md"
+  log ""
+  dcount=$(ls -1 "$root"/.ai/decisions/*.md 2>/dev/null | wc -l | tr -d ' ')
+  log "decisions (ADRs): $dcount"
+  if [ -f "$root/.ai/todo.md" ]; then
+    open_todos=$(grep -c -- '- \[ \]' "$root/.ai/todo.md" 2>/dev/null || echo 0)
+    log "open TODO items:  $open_todos"
+  fi
+  [ -n "${mf:-}" ] && [ -f "$mf" ] && log "engram project:   $(manifest_get engram_name "$mf" 2>/dev/null || project_name)"
+  log "=============================="
+  ok "bootstrap complete — agent context is ready."
+}
+
+cmd_sync() {
+  root=$(repo_root)
+  have engram || die "engram not installed — cannot export sync chunks."
+  proj=""
+  [ -f "$root/.ai/manifest.yml" ] && proj=$(manifest_get engram_name "$root/.ai/manifest.yml" 2>/dev/null || true)
+  info "exporting new memories to .engram/chunks/"
+  if [ -n "$proj" ]; then
+    ( cd -- "$root" && engram sync --project "$proj" ) || ( cd -- "$root" && engram sync )
+  else
+    ( cd -- "$root" && engram sync )
+  fi
+  if have git && git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+    pending=$(git -C "$root" status --porcelain -- .engram 2>/dev/null || true)
+    if [ -n "$pending" ]; then
+      warn "new/changed chunks to commit:"
+      printf '%s\n' "$pending"
+      log "commit them with your change:  git add .engram .ai && git commit"
+    else
+      ok "no new chunks to commit."
+    fi
+  fi
+}
+
+cmd_status() {
+  root=$(repo_root)
+  log "ai-memory-kit $AIMEM_VERSION"
+  log "repository:     $root"
+  log "engram project: $(project_name)"
+  log ""
+  log "tools:"
+  for t in git engram gga gentle-ai; do
+    if have "$t"; then ok "$t"; else warn "$t (missing)"; fi
+  done
+  log ""
+  if [ -d "$root/.ai" ]; then
+    ok ".ai/ present"
+    for f in CONTEXT.md conventions.md directives.md todo.md problems.md changelog.md manifest.yml; do
+      [ -f "$root/.ai/$f" ] && log "  - .ai/$f"
+    done
+    dcount=$(ls -1 "$root"/.ai/decisions/*.md 2>/dev/null | wc -l | tr -d ' ')
+    log "  - .ai/decisions/ ($dcount ADR)"
+  else
+    warn ".ai/ missing — run 'aimem init'"
+  fi
+  if have engram; then
+    log ""
+    ( cd -- "$root" && engram sync --status 2>/dev/null ) || true
+  fi
+}
+
+cmd_doctor() {
+  root=$(repo_root)
+  cmd_status
+  log ""
+  log "diagnostics:"
+  # secret smell test on the human memory (never commit secrets)
+  if [ -d "$root/.ai" ]; then
+    if grep -RInaE '(api[_-]?key|secret|password|token|BEGIN [A-Z ]*PRIVATE KEY)[[:space:]]*[:=]' "$root/.ai" 2>/dev/null | grep -vi 'EXAMPLE\|placeholder\|source:' >/dev/null 2>&1; then
+      warn "possible secret-like content in .ai/ — review and redact before committing."
+    else
+      ok "no obvious secrets in .ai/"
+    fi
+  fi
+  if have engram; then
+    ( cd -- "$root" && engram doctor 2>/dev/null ) || warn "engram doctor unavailable"
+  fi
+  if have gga && [ -f "$root/.gga" ]; then ok ".gga present (gga review configured)"; fi
+}
+
+cmd_save() {
+  [ $# -ge 2 ] || die "usage: aimem save \"<title>\" \"<body>\" [type]"
+  root=$(repo_root)
+  title=$1; body=$2; typ=${3:-discovery}
+  # 1) durable Markdown record (source of truth)
+  cl="$root/.ai/changelog.md"
+  mkdir -p -- "$root/.ai"
+  { printf '\n## %s — %s\n\n%s\n' "$(date -u +%Y-%m-%d)" "$title" "$body"; } >>"$cl"
+  ok "appended to .ai/changelog.md"
+  # 2) queryable cache
+  if have engram; then
+    ( cd -- "$root" && engram save "$title" "$body" --type "$typ" --scope project ) \
+      && ok "saved to Engram (type=$typ)" || warn "engram save failed (Markdown record still written)"
+  else
+    warn "engram not installed — saved to Markdown only"
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+aimem — repository-centric, machine-independent AI memory
+
+USAGE
+  aimem <command> [options]
+
+COMMANDS
+  init [--hooks]        Scaffold .ai/ + .engram/ + root templates (idempotent).
+                        --hooks also installs git post-merge/post-checkout hooks.
+  bootstrap            On a fresh clone/machine: rehydrate Engram from committed
+                        chunks, run declarative regenerators, print context.
+  sync                 Export new memories to .engram/chunks/ for committing.
+  save "<t>" "<b>" [type]
+                        Append a record to .ai/changelog.md and Engram.
+  status               Show tools, project, .ai/ layout, and sync status.
+  doctor               Deeper diagnostics (secrets, engram, gga).
+  version              Print version.
+  help                 This help.
+
+MEMORY MODEL
+  .ai/*.md         human source of truth (versioned, authoritative)
+  .engram/chunks/  machine-readable Engram cache (versioned)
+  ~/.engram        local Engram DB (ephemeral, regenerable, git-ignored)
+
+Docs: https://github.com/darkrei08/ai-memory-kit
+EOF
+}
+
+# --------------------------------------------------------------------------
+# dispatch
+# --------------------------------------------------------------------------
+cmd=${1:-help}
+[ $# -gt 0 ] && shift || true
+case "$cmd" in
+  init)      cmd_init "$@" ;;
+  bootstrap) cmd_bootstrap "$@" ;;
+  sync)      cmd_sync "$@" ;;
+  save)      cmd_save "$@" ;;
+  status)    cmd_status "$@" ;;
+  doctor)    cmd_doctor "$@" ;;
+  version|-v|--version) log "aimem $AIMEM_VERSION" ;;
+  help|-h|--help) usage ;;
+  *) warn "unknown command: $cmd"; usage; exit 2 ;;
+esac

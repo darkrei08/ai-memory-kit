@@ -22,3 +22,4 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - Opt-in git hooks (`post-merge`, `post-checkout`) that auto-import chunks.
 - Docs: architecture, bootstrap, usage examples, security & privacy, conflicts &
   staleness.
+- npm packaging: `npx @darkrei08/ai-memory-kit` via a zero-dependency Node launcher that bundles the templates and runs the aimem CLI.

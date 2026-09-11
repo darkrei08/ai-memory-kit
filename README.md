@@ -94,7 +94,16 @@ curl -fsSL https://raw.githubusercontent.com/darkrei08/ai-memory-kit/main/instal
 
 # or just the skill into a specific agent, via the skills tool
 npx skills add darkrei08/ai-memory-kit --skill project-memory --global --agent pi --copy --yes
+
+# via npm — runs the same aimem CLI; requires a POSIX shell (Git Bash/WSL on Windows)
+npx @darkrei08/ai-memory-kit init
+# or install the command globally
+npm i -g @darkrei08/ai-memory-kit
 ```
+
+The npm package bundles the `.ai/` templates and runs the same `aimem` CLI through
+a zero-dependency Node launcher, so `npx @darkrei08/ai-memory-kit <cmd>` behaves
+identically to the installed `aimem <cmd>`.
 
 Windows: `irm https://raw.githubusercontent.com/darkrei08/ai-memory-kit/main/install.ps1 | iex`
 

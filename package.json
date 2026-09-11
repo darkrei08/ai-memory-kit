@@ -1,0 +1,21 @@
+{
+  "name": "@darkrei08/ai-memory-kit",
+  "version": "0.1.0",
+  "description": "Machine-independent, repository-centric memory for AI coding agents (project-memory skill + aimem CLI + Engram/gga integration).",
+  "type": "module",
+  "license": "MIT",
+  "author": "darkrei08",
+  "homepage": "https://github.com/darkrei08/ai-memory-kit#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/darkrei08/ai-memory-kit.git" },
+  "bugs": { "url": "https://github.com/darkrei08/ai-memory-kit/issues" },
+  "bin": {
+    "ai-memory-kit": "bin/ai-memory-kit.mjs",
+    "aimem": "bin/ai-memory-kit.mjs"
+  },
+  "files": ["bin/", "templates/", "skills/", "hooks/", "docs/", "README.md", "LICENSE", "CHANGELOG.md"],
+  "engines": { "node": ">=16" },
+  "keywords": ["ai","memory","agent","engram","gga","gentle-ai","persistent-memory","project-memory","repository-memory","context","adr","pi","claude","cursor","codex"],
+  "scripts": {
+    "test": "sh -n bin/aimem && node --check bin/ai-memory-kit.mjs"
+  }
+}
